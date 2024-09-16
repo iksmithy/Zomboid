@@ -1,0 +1,181 @@
+import requests
+from bs4 import BeautifulSoup
+import re
+import time
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from tkinter import ttk
+from threading import Thread
+
+# Function to intelligently extract Mod IDs and Map Folders from the Steam Workshop page
+def get_all_mod_ids_and_maps_from_workshop(workshop_id):
+    url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
+
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Check for HTTP errors
+    except requests.RequestException as e:
+        print(f"Error accessing {url}: {e}")
+        return [], []
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+    description = soup.find('div', {'class': 'workshopItemDescription'})
+
+    if description:
+        text = description.text
+        mod_id_pattern = re.compile(r'Mod ID:\s*([A-Za-z0-9_]+)', re.IGNORECASE)
+        map_folder_pattern = re.compile(r'Map Folder:\s*([A-Za-z0-9_]+)', re.IGNORECASE)
+
+        mod_ids = mod_id_pattern.findall(text)
+        map_folders = map_folder_pattern.findall(text)
+
+        return mod_ids, map_folders
+    else:
+        return [], []
+
+# Function to process the raw input format (without quotes or commas)
+def process_raw_input(raw_input):
+    input_list = []
+    lines = raw_input.strip().split("\n")
+    for line in lines:
+        name, workshop_id = line.rsplit("/", 1)
+        input_list.append(workshop_id.strip())
+    return input_list
+
+# Function to remove duplicates while preserving order and ignoring case
+def remove_duplicates_case_insensitive(seq):
+    seen = set()
+    result = []
+    for item in seq:
+        lower_item = item.lower()
+        if lower_item not in seen and item != "Mod ID or Map Folder not found":
+            seen.add(lower_item)
+            result.append(item)
+    return result
+
+# Function to process data from the text area or file
+def process_data():
+    try:
+        # Clear previous output
+        mod_ids_text.delete('1.0', tk.END)
+        map_folders_text.delete('1.0', tk.END)
+        failed_ids_text.delete('1.0', tk.END)
+
+        raw_input = text_input.get('1.0', tk.END).strip()
+        if not raw_input:
+            file_path = file_path_var.get()
+            if file_path:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as file:
+                        raw_input = file.read()
+                except UnicodeDecodeError:
+                    try:
+                        with open(file_path, 'r', encoding='latin-1') as file:
+                            raw_input = file.read()
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Failed to read file: {e}")
+                        return
+            else:
+                messagebox.showerror("Error", "No input provided!")
+                return
+
+        workshop_ids = process_raw_input(raw_input)
+
+        def worker():
+            all_mod_ids_in_order = []
+            all_map_folders_in_order = []
+            all_workshop_ids_in_order = []
+            failed_workshop_ids = []
+
+            total = len(workshop_ids)
+            for i, workshop_id in enumerate(workshop_ids):
+                mod_ids, map_folders = get_all_mod_ids_and_maps_from_workshop(workshop_id)
+
+                if not mod_ids and not map_folders:
+                    failed_workshop_ids.append(workshop_id)
+                    continue
+
+                if mod_ids:
+                    all_mod_ids_in_order.append(";".join(remove_duplicates_case_insensitive(mod_ids)))
+
+                if map_folders:
+                    all_map_folders_in_order.append(";".join(remove_duplicates_case_insensitive(map_folders)))
+
+                all_workshop_ids_in_order.append(workshop_id)
+
+                # Update progress bar
+                progress_var.set((i + 1) / total * 100)
+                window.update_idletasks()
+
+                # Be respectful of server load and avoid getting rate-limited
+                time.sleep(1)  # Sleep for 1 second between requests
+
+            workshop_ids_string = ";".join(remove_duplicates_case_insensitive(all_workshop_ids_in_order))
+            mod_ids_string = ";".join(remove_duplicates_case_insensitive(all_mod_ids_in_order))
+            map_folders_string = ";".join(remove_duplicates_case_insensitive(all_map_folders_in_order))
+            failed_ids_string = ";".join(failed_workshop_ids)
+
+            mod_ids_text.insert(tk.END, mod_ids_string)
+            map_folders_text.insert(tk.END, map_folders_string)
+            failed_ids_text.insert(tk.END, failed_ids_string)
+
+            messagebox.showinfo("Completed", "Processing finished!")
+
+        thread = Thread(target=worker)
+        thread.start()
+
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred: {e}")
+
+# Create the main window
+window = tk.Tk()
+window.title("Mod List Processor")
+
+# Create and place widgets
+frame = tk.Frame(window)
+frame.pack(padx=10, pady=10)
+
+text_input = tk.Text(frame, height=10, width=50)
+text_input.pack(side=tk.LEFT, padx=(0, 10))
+
+scrollbar = tk.Scrollbar(frame, command=text_input.yview)
+scrollbar.pack(side=tk.LEFT, fill=tk.Y)
+text_input.config(yscrollcommand=scrollbar.set)
+
+file_path_var = tk.StringVar()
+
+def browse_file():
+    file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
+    file_path_var.set(file_path)
+    if file_path:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            text_input.delete('1.0', tk.END)
+            text_input.insert(tk.END, file.read())
+
+browse_button = tk.Button(window, text="Browse", command=browse_file)
+browse_button.pack(pady=(0, 10))
+
+process_button = tk.Button(window, text="Process", command=process_data)
+process_button.pack(pady=(0, 10))
+
+progress_var = tk.DoubleVar()
+progress_bar = ttk.Progressbar(window, variable=progress_var, maximum=100)
+progress_bar.pack(fill=tk.X, pady=(0, 10))
+
+mod_ids_label = tk.Label(window, text="Mod IDs:")
+mod_ids_label.pack()
+mod_ids_text = tk.Text(window, height=5, width=80)
+mod_ids_text.pack()
+
+map_folders_label = tk.Label(window, text="Map Folders:")
+map_folders_label.pack()
+map_folders_text = tk.Text(window, height=5, width=80)
+map_folders_text.pack()
+
+failed_ids_label = tk.Label(window, text="Failed Workshop IDs:")
+failed_ids_label.pack()
+failed_ids_text = tk.Text(window, height=5, width=80)
+failed_ids_text.pack()
+
+# Run the application
+window.mainloop()
