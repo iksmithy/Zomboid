@@ -1,13 +1,13 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import ttk  # Import ttk for themed widgets
+import pyperclip
 import requests
 from bs4 import BeautifulSoup
 import re
 import time
-import tkinter as tk
-from tkinter import filedialog, messagebox
-from tkinter import ttk
-from threading import Thread
+import threading
 
-# Function to intelligently extract Mod IDs and Map Folders from the Steam Workshop page
 def get_all_mod_ids_and_maps_from_workshop(workshop_id):
     url = f"https://steamcommunity.com/sharedfiles/filedetails/?id={workshop_id}"
 
@@ -15,7 +15,6 @@ def get_all_mod_ids_and_maps_from_workshop(workshop_id):
         response = requests.get(url)
         response.raise_for_status()  # Check for HTTP errors
     except requests.RequestException as e:
-        print(f"Error accessing {url}: {e}")
         return [], []
 
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -33,7 +32,6 @@ def get_all_mod_ids_and_maps_from_workshop(workshop_id):
     else:
         return [], []
 
-# Function to process the raw input format (without quotes or commas)
 def process_raw_input(raw_input):
     input_list = []
     lines = raw_input.strip().split("\n")
@@ -42,7 +40,6 @@ def process_raw_input(raw_input):
         input_list.append(workshop_id.strip())
     return input_list
 
-# Function to remove duplicates while preserving order and ignoring case
 def remove_duplicates_case_insensitive(seq):
     seen = set()
     result = []
@@ -53,42 +50,32 @@ def remove_duplicates_case_insensitive(seq):
             result.append(item)
     return result
 
-# Function to process data from the text area or file
-def process_data():
-    try:
-        # Clear previous output
-        mod_ids_text.delete('1.0', tk.END)
-        map_folders_text.delete('1.0', tk.END)
-        failed_ids_text.delete('1.0', tk.END)
+def browse_file():
+    file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
+    if file_path:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                input_text.delete('1.0', tk.END)
+                input_text.insert(tk.END, file.read())
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
 
-        raw_input = text_input.get('1.0', tk.END).strip()
-        if not raw_input:
-            file_path = file_path_var.get()
-            if file_path:
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as file:
-                        raw_input = file.read()
-                except UnicodeDecodeError:
-                    try:
-                        with open(file_path, 'r', encoding='latin-1') as file:
-                            raw_input = file.read()
-                    except Exception as e:
-                        messagebox.showerror("Error", f"Failed to read file: {e}")
-                        return
-            else:
-                messagebox.showerror("Error", "No input provided!")
-                return
+def process_input():
+    def process():
+        try:
+            raw_input = input_text.get('1.0', tk.END).strip()
+            workshop_ids = process_raw_input(raw_input)
 
-        workshop_ids = process_raw_input(raw_input)
-
-        def worker():
             all_mod_ids_in_order = []
             all_map_folders_in_order = []
             all_workshop_ids_in_order = []
             failed_workshop_ids = []
 
-            total = len(workshop_ids)
-            for i, workshop_id in enumerate(workshop_ids):
+            progress_bar['value'] = 0
+            progress_bar['maximum'] = len(workshop_ids)
+            root.update_idletasks()
+
+            for workshop_id in workshop_ids:
                 mod_ids, map_folders = get_all_mod_ids_and_maps_from_workshop(workshop_id)
 
                 if not mod_ids and not map_folders:
@@ -103,11 +90,8 @@ def process_data():
 
                 all_workshop_ids_in_order.append(workshop_id)
 
-                # Update progress bar
-                progress_var.set((i + 1) / total * 100)
-                window.update_idletasks()
-
-                # Be respectful of server load and avoid getting rate-limited
+                progress_bar['value'] += 1
+                root.update_idletasks()
                 time.sleep(1)  # Sleep for 1 second between requests
 
             workshop_ids_string = ";".join(remove_duplicates_case_insensitive(all_workshop_ids_in_order))
@@ -115,67 +99,104 @@ def process_data():
             map_folders_string = ";".join(remove_duplicates_case_insensitive(all_map_folders_in_order))
             failed_ids_string = ";".join(failed_workshop_ids)
 
-            mod_ids_text.insert(tk.END, mod_ids_string)
-            map_folders_text.insert(tk.END, map_folders_string)
-            failed_ids_text.insert(tk.END, failed_ids_string)
+            output_workshop_ids.config(state=tk.NORMAL)
+            output_workshop_ids.delete('1.0', tk.END)
+            output_workshop_ids.insert(tk.END, workshop_ids_string)
+            output_workshop_ids.config(state=tk.DISABLED)
 
-            messagebox.showinfo("Completed", "Processing finished!")
+            output_mod_ids.config(state=tk.NORMAL)
+            output_mod_ids.delete('1.0', tk.END)
+            output_mod_ids.insert(tk.END, mod_ids_string)
+            output_mod_ids.config(state=tk.DISABLED)
 
-        thread = Thread(target=worker)
-        thread.start()
+            output_map_folders.config(state=tk.NORMAL)
+            output_map_folders.delete('1.0', tk.END)
+            output_map_folders.insert(tk.END, map_folders_string)
+            output_map_folders.config(state=tk.DISABLED)
 
+            output_failed_ids.config(state=tk.NORMAL)
+            output_failed_ids.delete('1.0', tk.END)
+            output_failed_ids.insert(tk.END, failed_ids_string)
+            output_failed_ids.config(state=tk.DISABLED)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+
+    # Run processing in a separate thread
+    threading.Thread(target=process, daemon=True).start()
+
+def paste_from_clipboard():
+    try:
+        clipboard_text = pyperclip.paste()
+        input_text.delete('1.0', tk.END)
+        input_text.insert(tk.END, clipboard_text)
     except Exception as e:
-        messagebox.showerror("Error", f"An error occurred: {e}")
+        messagebox.showerror("Error", f"An error occurred while pasting from clipboard: {e}")
 
-# Create the main window
-window = tk.Tk()
-window.title("Mod List Processor")
+def copy_to_clipboard(output_widget):
+    try:
+        output_text = output_widget.get('1.0', tk.END).strip()
+        pyperclip.copy(output_text)
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred while copying to clipboard: {e}")
 
-# Create and place widgets
-frame = tk.Frame(window)
-frame.pack(padx=10, pady=10)
+root = tk.Tk()
+root.title("Mod List Processor")
 
-text_input = tk.Text(frame, height=10, width=50)
-text_input.pack(side=tk.LEFT, padx=(0, 10))
+frame = tk.Frame(root)
+frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-scrollbar = tk.Scrollbar(frame, command=text_input.yview)
-scrollbar.pack(side=tk.LEFT, fill=tk.Y)
-text_input.config(yscrollcommand=scrollbar.set)
+input_label = tk.Label(frame, text="Input Mod List:")
+input_label.pack(anchor=tk.W)
 
-file_path_var = tk.StringVar()
+input_text = scrolledtext.ScrolledText(frame, height=10, width=50)
+input_text.pack()
 
-def browse_file():
-    file_path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
-    file_path_var.set(file_path)
-    if file_path:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            text_input.delete('1.0', tk.END)
-            text_input.insert(tk.END, file.read())
+paste_button = tk.Button(frame, text="Paste from Clipboard", command=paste_from_clipboard)
+paste_button.pack(pady=5)
 
-browse_button = tk.Button(window, text="Browse", command=browse_file)
-browse_button.pack(pady=(0, 10))
+browse_button = tk.Button(frame, text="Browse for File", command=browse_file)
+browse_button.pack(pady=5)
 
-process_button = tk.Button(window, text="Process", command=process_data)
-process_button.pack(pady=(0, 10))
+process_button = tk.Button(frame, text="Process", command=process_input)
+process_button.pack(pady=10)
 
-progress_var = tk.DoubleVar()
-progress_bar = ttk.Progressbar(window, variable=progress_var, maximum=100)
-progress_bar.pack(fill=tk.X, pady=(0, 10))
+progress_bar = ttk.Progressbar(frame, orient=tk.HORIZONTAL, length=400, mode='determinate')
+progress_bar.pack(pady=10)
 
-mod_ids_label = tk.Label(window, text="Mod IDs:")
-mod_ids_label.pack()
-mod_ids_text = tk.Text(window, height=5, width=80)
-mod_ids_text.pack()
+output_frame = tk.Frame(root)
+output_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-map_folders_label = tk.Label(window, text="Map Folders:")
-map_folders_label.pack()
-map_folders_text = tk.Text(window, height=5, width=80)
-map_folders_text.pack()
+output_label_workshop_ids = tk.Label(output_frame, text="Workshop IDs:")
+output_label_workshop_ids.pack(anchor=tk.W)
+output_workshop_ids = scrolledtext.ScrolledText(output_frame, height=5, width=60, state=tk.DISABLED)
+output_workshop_ids.pack()
 
-failed_ids_label = tk.Label(window, text="Failed Workshop IDs:")
-failed_ids_label.pack()
-failed_ids_text = tk.Text(window, height=5, width=80)
-failed_ids_text.pack()
+copy_button_workshop_ids = tk.Button(output_frame, text="Copy to Clipboard", command=lambda: copy_to_clipboard(output_workshop_ids))
+copy_button_workshop_ids.pack(pady=5)
 
-# Run the application
-window.mainloop()
+output_label_mod_ids = tk.Label(output_frame, text="Mod IDs:")
+output_label_mod_ids.pack(anchor=tk.W)
+output_mod_ids = scrolledtext.ScrolledText(output_frame, height=5, width=60, state=tk.DISABLED)
+output_mod_ids.pack()
+
+copy_button_mod_ids = tk.Button(output_frame, text="Copy to Clipboard", command=lambda: copy_to_clipboard(output_mod_ids))
+copy_button_mod_ids.pack(pady=5)
+
+output_label_map_folders = tk.Label(output_frame, text="Map Folders:")
+output_label_map_folders.pack(anchor=tk.W)
+output_map_folders = scrolledtext.ScrolledText(output_frame, height=5, width=60, state=tk.DISABLED)
+output_map_folders.pack()
+
+copy_button_map_folders = tk.Button(output_frame, text="Copy to Clipboard", command=lambda: copy_to_clipboard(output_map_folders))
+copy_button_map_folders.pack(pady=5)
+
+output_label_failed_ids = tk.Label(output_frame, text="Failed Workshop IDs:")
+output_label_failed_ids.pack(anchor=tk.W)
+output_failed_ids = scrolledtext.ScrolledText(output_frame, height=5, width=60, state=tk.DISABLED)
+output_failed_ids.pack()
+
+copy_button_failed_ids = tk.Button(output_frame, text="Copy to Clipboard", command=lambda: copy_to_clipboard(output_failed_ids))
+copy_button_failed_ids.pack(pady=5)
+
+root.mainloop()
